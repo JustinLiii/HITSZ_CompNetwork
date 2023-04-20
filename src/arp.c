@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "net.h"
 #include "arp.h"
+#include "queue.h"
 #include "ethernet.h"
 /**
  * @brief 初始的arp包
@@ -58,7 +59,18 @@ void arp_print()
  */
 void arp_req(uint8_t *target_ip)
 {
-    // TO-DO
+    buf_t *buf = &rxbuf;
+    memset(buf,0,sizeof(buf_t));
+    buf_init(buf, sizeof(arp_pkt_t));
+    arp_pkt_t *pkt = (arp_pkt_t*)buf->data;
+    memcpy(pkt, &arp_init_pkt, sizeof(arp_pkt_t));
+
+    // 填写arp内容
+    pkt->opcode16 = constswap16(ARP_REQUEST);
+    memset(pkt->target_mac, 0, NET_MAC_LEN);
+    memcpy(pkt->target_ip, target_ip, NET_MAC_LEN);
+    buf_add_padding(buf, ARP_PADDING);
+    ethernet_out(buf, ether_broadcast_mac, NET_PROTOCOL_ARP);
 }
 
 /**
@@ -69,7 +81,18 @@ void arp_req(uint8_t *target_ip)
  */
 void arp_resp(uint8_t *target_ip, uint8_t *target_mac)
 {
-    // TO-DO
+    buf_t *buf = &txbuf;
+    memset(buf,0,sizeof(buf_t));
+    buf_init(buf, sizeof(arp_pkt_t));
+    arp_pkt_t *pkt = (arp_pkt_t*)buf->data;
+    memcpy(pkt, &arp_init_pkt, sizeof(arp_pkt_t));
+
+    // 填写arp内容
+    pkt->opcode16 = constswap16(ARP_REPLY);
+    memcpy(pkt->target_mac, target_mac, NET_MAC_LEN*sizeof(uint8_t));
+    memcpy(pkt->target_ip, target_ip, NET_MAC_LEN*sizeof(uint8_t));
+    buf_add_padding(buf, ARP_PADDING);
+    ethernet_out(buf, target_mac, NET_PROTOCOL_ARP);
 }
 
 /**
@@ -80,7 +103,39 @@ void arp_resp(uint8_t *target_ip, uint8_t *target_mac)
  */
 void arp_in(buf_t *buf, uint8_t *src_mac)
 {
-    // TO-DO
+    if(buf->len < sizeof(arp_pkt_t)) return;
+    arp_pkt_t *pkt = (arp_pkt_t*)buf->data;
+
+    // 检查
+    if(pkt->hw_type16 != constswap16(ARP_HW_ETHER)) return;
+    if(pkt->pro_type16 != constswap16(NET_PROTOCOL_IP)) return;
+    if(pkt->hw_len != NET_MAC_LEN) return;
+    if(pkt->pro_len != NET_IP_LEN) return;
+
+    map_set(&arp_table, pkt->sender_ip, pkt->sender_mac);
+
+    queue_t** queue_p = map_get(&arp_buf, pkt->sender_ip);
+    if (queue_p != NULL)
+    {
+        queue_t* queue = *queue_p;
+        // 清空缓存
+        while (!queue_empty(queue))
+        {
+            buf_t* buf = &txbuf;
+            queue_get(queue, buf);
+            ethernet_out(buf, pkt->sender_mac, NET_PROTOCOL_IP);
+        }
+        map_delete(&arp_buf, pkt->sender_ip);
+        queue_destroy(queue);
+    }
+
+    if (pkt->opcode16 == constswap16(ARP_REQUEST))
+    {
+        if(!memcmp(pkt->target_ip, net_if_ip, NET_IP_LEN))
+        {
+            arp_resp(pkt->sender_ip, pkt->sender_mac);
+        }
+    }
 }
 
 /**
@@ -92,7 +147,27 @@ void arp_in(buf_t *buf, uint8_t *src_mac)
  */
 void arp_out(buf_t *buf, uint8_t *ip)
 {
-    // TO-DO
+    uint8_t *target_mac = (uint8_t*)map_get(&arp_table, ip);
+    if(target_mac == NULL)
+    {
+        queue_t** queue_p = map_get(&arp_buf, ip);
+        queue_t* queue = NULL;
+        if (queue_p == NULL)
+        {
+            queue = queue_init(sizeof(buf_t),buf_copy);
+            map_set(&arp_buf, ip, &queue);
+            queue_append(queue, buf);
+            arp_req(ip);
+        }
+        else
+        {
+            queue = *queue_p;
+            queue_append(queue, buf);
+        }
+        
+        return;
+    }
+    ethernet_out(buf, target_mac, NET_PROTOCOL_IP);
 }
 
 /**
@@ -102,7 +177,8 @@ void arp_out(buf_t *buf, uint8_t *ip)
 void arp_init()
 {
     map_init(&arp_table, NET_IP_LEN, NET_MAC_LEN, 0, ARP_TIMEOUT_SEC, NULL);
-    map_init(&arp_buf, NET_IP_LEN, sizeof(buf_t), 0, ARP_MIN_INTERVAL, buf_copy);
+    // buf map使用队列
+    map_init(&arp_buf, NET_IP_LEN, sizeof(queue_t*), 0, ARP_MIN_INTERVAL, NULL);
     net_add_protocol(NET_PROTOCOL_ARP, arp_in);
     arp_req(net_if_ip);
 }

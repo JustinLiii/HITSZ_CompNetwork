@@ -10,9 +10,7 @@
  */
 void ethernet_in(buf_t *buf)
 {
-    uint8_t* src_mac;
     uint16_t protocal;
-    src_mac = (uint8_t*)malloc(NET_MAC_LEN*sizeof(uint8_t));
 
     // 判断长度
     if(buf->len < sizeof(ether_hdr_t)) return;
@@ -20,27 +18,15 @@ void ethernet_in(buf_t *buf)
     // 拆包
     ether_hdr_t *hdr = (ether_hdr_t *)(buf->data);
     uint8_t* dst = hdr->dst;
-    int broadcast = 1;
-    int correct = 1;
-    for(int i=0; i<NET_MAC_LEN;i++)
-    {
-        if (broadcast && dst[i] != ether_broadcast_mac[i])
-        {
-            broadcast = 0;
-        }
-        if (dst[i] != net_if_mac[i])
-        {
-            correct = 0;
-        }
-    }
-    if (!broadcast && !correct) return;
 
-    memcpy(src_mac, hdr->src, NET_MAC_LEN*sizeof(uint8_t));
+    if (memcmp(dst, ether_broadcast_mac, NET_MAC_LEN) 
+    && memcmp(dst, net_if_mac, NET_MAC_LEN)) return;
+
     protocal = swap16(hdr->protocol16);
 
     buf_remove_header(buf, sizeof(ether_hdr_t));
 
-    net_in(buf, protocal, src_mac);
+    net_in(buf, protocal, hdr->src);
 }
 /**
  * @brief 处理一个要发送的数据包

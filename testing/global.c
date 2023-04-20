@@ -6,6 +6,7 @@
 #include "map.h"
 #include "arp.h"
 #include "utils.h"
+#include "queue.h"
 
 FILE *control_flow;
 
@@ -164,11 +165,13 @@ void log_tab_buf(){
                 uint8_t *entry = (uint8_t*) map_entry_get(&arp_buf, i);
                 if (map_entry_valid(&arp_buf, entry)) {
                         fprintf(arp_log_f, "%s -> ", print_ip(entry));
-                        buf_t * buf = (buf_t*) (entry + arp_buf.key_len);
+                        buf_t * buf = (buf_t*)malloc(sizeof(buf_t));
+                        queue_peek(*((queue_t**)(entry + arp_buf.key_len)), buf);
                         for(int i = 0; i < buf->len; i++){
                                 fprintf(arp_log_f," %02x",buf->data[i]);
                         }
                         fputc('\n', arp_log_f);
+                        free(buf);
                 }
         }
 }

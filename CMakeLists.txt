@@ -37,6 +37,7 @@ set(TEST_FIX_SOURCE
 add_executable(eth_in 
     testing/eth_in.c
     src/ethernet.c
+    src/queue.c
     testing/faker/arp.c
     testing/faker/ip.c
     testing/faker/icmp.c
@@ -50,6 +51,7 @@ target_compile_definitions(eth_in PUBLIC TEST)
 add_executable(eth_out
     testing/eth_out.c
     src/ethernet.c
+    src/queue.c
     testing/faker/arp.c
     testing/faker/ip.c
     testing/faker/icmp.c
@@ -64,6 +66,7 @@ add_executable(arp_test
     testing/arp_test.c
     src/ethernet.c
     src/arp.c
+    src/queue.c
     testing/faker/ip.c
     testing/faker/icmp.c
     testing/faker/udp.c

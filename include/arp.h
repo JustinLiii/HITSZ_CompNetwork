@@ -6,6 +6,7 @@
 #define ARP_HW_ETHER 0x1 // 以太网
 #define ARP_REQUEST 0x1  // ARP请求包
 #define ARP_REPLY 0x2    // ARP响应包
+#define ARP_PADDING 18
 
 #pragma pack(1)
 typedef struct arp_pkt
