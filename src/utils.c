@@ -77,15 +77,22 @@ uint8_t ip_prefix_match(uint8_t *ipa, uint8_t *ipb)
  */
 uint16_t checksum16(uint16_t *data, size_t len)
 {
+    int len16 = len / sizeof(uint16_t);
+    if (len & 0x1)  len16 += 1;
+
+    uint16_t* checksum_data = (uint16_t*)malloc(len16*sizeof(uint16_t));
+    memset(checksum_data, 0, len16*sizeof(uint16_t));
+    memcpy(checksum_data, data, len);
+
     uint32_t sum = 0;
-    len = len / sizeof(uint16_t);
-    for (int i = 0; i < len; i++)
+    for (int i = 0; i < len16; i++)
     {
-        sum += swap16(data[i]);
+        sum += swap16(checksum_data[i]);
         while (sum >> 16)
         {
             sum = (sum & 0xffff) + (sum >> 16);
         }
     }
+    free(checksum_data);
     return swap16(~sum);
 }

@@ -29,6 +29,7 @@ void ip_in(buf_t *buf, uint8_t *src_mac)
     uint16_t cal_checksum = checksum16((uint16_t*)hdr, sizeof(ip_hdr_t));
 
     if (cal_checksum != received_checksum) return;
+    hdr->hdr_checksum16 = received_checksum;
 
     // ip
     if(memcmp(hdr->dst_ip, net_if_ip, NET_IP_LEN)) return;
@@ -43,17 +44,18 @@ void ip_in(buf_t *buf, uint8_t *src_mac)
     }
 
     // 发送
-    uint16_t protocol = swap16(hdr->protocol);
+    uint8_t protocol = hdr->protocol;
     switch (protocol)
     {
         case(NET_PROTOCOL_UDP):
         case(NET_PROTOCOL_ICMP):
-        case(NET_PROTOCOL_TCP):
-            buf_remove_header(buf, swap16(hdr->hdr_len) * IP_HDR_LEN_PER_BYTE);
+        // case(NET_PROTOCOL_TCP):
+            buf_remove_header(buf, hdr->hdr_len * IP_HDR_LEN_PER_BYTE);
             net_in(buf, protocol, src_ip);
             break;
         default:
             icmp_unreachable(buf, src_ip, ICMP_CODE_PROTOCOL_UNREACH);
+            break;
     }
 }
 
