@@ -24,6 +24,7 @@ typedef struct ip_hdr
 #define IP_HDR_OFFSET_PER_BYTE 8   //ip分片偏移长度单位
 #define IP_VERSION_4 4             //ipv4
 #define IP_MORE_FRAGMENT (1 << 13) //ip分片mf位
+#define IP_MTU 1500                //ip最大传输单元
 void ip_in(buf_t *buf, uint8_t *src_mac);
 void ip_out(buf_t *buf, uint8_t *ip, net_protocol_t protocol);
 void ip_init();

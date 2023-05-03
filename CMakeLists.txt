@@ -80,6 +80,7 @@ add_executable(ip_test
     testing/ip_test.c
     src/ethernet.c
     src/arp.c
+    src/queue.c
     src/ip.c
     testing/faker/icmp.c
     testing/faker/udp.c
@@ -92,6 +93,7 @@ target_compile_definitions(ip_test PUBLIC TEST)
 add_executable(ip_frag_test
     testing/ip_frag_test.c
     testing/faker/arp.c
+    src/queue.c
     src/ethernet.c
     src/ip.c
     testing/faker/icmp.c
@@ -106,6 +108,7 @@ add_executable(icmp_test
     testing/icmp_test.c
     src/ethernet.c
     src/arp.c
+    src/queue.c
     src/ip.c
     src/icmp.c
     testing/faker/udp.c
