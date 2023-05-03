@@ -23,7 +23,7 @@ void ip_in(buf_t *buf, uint8_t *src_mac)
     if(hdr->version != IP_VERSION_4) return;
 
     // checksum
-    uint16_t received_checksum = swap16(hdr->hdr_checksum16);
+    uint16_t received_checksum = hdr->hdr_checksum16;
 
     hdr->hdr_checksum16 = 0;
     uint16_t cal_checksum = checksum16((uint16_t*)hdr, sizeof(ip_hdr_t));
