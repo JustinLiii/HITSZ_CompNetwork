@@ -37,12 +37,11 @@ void ip_in(buf_t *buf, uint8_t *src_mac)
     memcpy(src_ip, hdr->src_ip, NET_IP_LEN);
     
     // padding，检查长度
-    if(hdr->total_len16 > swap16(buf->len)) return;  
-    else if(hdr->total_len16 < swap16(buf->len))
+    if(swap16(hdr->total_len16) > buf->len) return;  
+    else if(swap16(hdr->total_len16) < buf->len)
     {
-        buf_remove_padding(buf, swap16(hdr->total_len16) - buf->len);
+        buf_remove_padding(buf, buf->len - swap16(hdr->total_len16));
     }
-
     // 发送
     uint8_t protocol = hdr->protocol;
     switch (protocol)

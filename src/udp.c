@@ -19,13 +19,7 @@ map_t udp_table;
  */
 static uint16_t udp_checksum(buf_t *buf, uint8_t *src_ip, uint8_t *dst_ip)
 {
-    int padding = 0;
-    //  考虑到udp头本身为偶数字节，直接判断buf数据长度
-    if (buf->len % 2 == 1)
-    {
-        buf_add_padding(buf, 1);
-        padding = 1;
-    }
+    // 实现的checksum函数里本身就有对齐偶数的功能，在此不加padding
 
     udp_hdr_t* udp_hdr = (udp_hdr_t*)buf->data;
     buf_add_header(buf, sizeof(udp_peso_hdr_t));
@@ -40,7 +34,6 @@ static uint16_t udp_checksum(buf_t *buf, uint8_t *src_ip, uint8_t *dst_ip)
 
     // 恢复buf
     buf_remove_header(buf, sizeof(udp_peso_hdr_t));
-    if (padding) buf_remove_padding(buf, 1);
 
     return checksum;
 }
@@ -64,7 +57,7 @@ void udp_in(buf_t *buf, uint8_t *src_ip)
     hdr->checksum16 = received_checksum;
 
     uint16_t src_port =  swap16(hdr->dst_port16);
-    udp_handler_t handler = map_get(&udp_table, &src_port);
+    udp_handler_t handler = *((udp_handler_t*)map_get(&udp_table, &src_port));
     if (handler == NULL)
     {
         // port unreachable
