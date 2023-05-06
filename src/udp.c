@@ -47,9 +47,13 @@ static uint16_t udp_checksum(buf_t *buf, uint8_t *src_ip, uint8_t *dst_ip)
 void udp_in(buf_t *buf, uint8_t *src_ip)
 {
     if (buf->len < sizeof(udp_hdr_t)) return;
+    // 备份不存在的ip头
+    ip_hdr_t old_ip_hdr;
+    ip_hdr_t* ip_hdr = (ip_hdr_t*)((void*)buf->data - sizeof(ip_hdr_t));
+    memcpy(&old_ip_hdr, ip_hdr, sizeof(ip_hdr_t));
     udp_hdr_t* hdr = (udp_hdr_t*)buf->data;
 
-    // 检查checksum，都是大端
+    // 检查checksum，都是大端   
     uint16_t received_checksum = hdr->checksum16;
     hdr->checksum16 = 0;
     uint16_t cal_checksum = udp_checksum(buf, src_ip, net_if_ip);
@@ -57,18 +61,19 @@ void udp_in(buf_t *buf, uint8_t *src_ip)
     hdr->checksum16 = received_checksum;
 
     uint16_t src_port =  swap16(hdr->dst_port16);
-    udp_handler_t handler = *((udp_handler_t*)map_get(&udp_table, &src_port));
-    if (handler == NULL)
+    udp_handler_t* handler_p = (udp_handler_t*)map_get(&udp_table, &src_port);
+    if (handler_p == NULL)
     {
         // port unreachable
-        // ?? 不用原来的报头吗？
         buf_add_header(buf, sizeof(ip_hdr_t));
+        // restore header
+        memcpy(buf->data, &old_ip_hdr, sizeof(ip_hdr_t));
         icmp_unreachable(buf, src_ip, ICMP_CODE_PORT_UNREACH);
     }
     else
     {
         buf_remove_header(buf, sizeof(udp_hdr_t));
-        handler(buf->data, buf->len, src_ip, src_port);
+        (*handler_p)(buf->data, buf->len, src_ip, src_port);
     }
 }
 

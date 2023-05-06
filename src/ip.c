@@ -116,14 +116,12 @@ void ip_out(buf_t *buf, uint8_t *ip, net_protocol_t protocol)
         uint8_t *data = original_buf.data;
         int len = original_buf.len;
         uint16_t offset = 0;
+
         int mf = 1;
         while (mf)
         {
             size_t data_len;
-            if (len > max_data_len)
-            {
-                data_len = max_data_len;
-            }
+            if (len > max_data_len) data_len = max_data_len;
             else 
             {
                 mf = 0;
@@ -132,10 +130,7 @@ void ip_out(buf_t *buf, uint8_t *ip, net_protocol_t protocol)
                     buf_add_padding(&original_buf, (len & ~0x7) + IP_HDR_OFFSET_PER_BYTE - len);
                     data_len = (len & ~0x7) + IP_HDR_OFFSET_PER_BYTE;
                 }
-                else
-                {
-                    data_len = len;
-                }
+                else data_len = len;
             }
 
             buf_init(buf, data_len);
