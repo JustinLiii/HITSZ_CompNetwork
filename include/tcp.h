@@ -94,7 +94,7 @@ typedef enum connect_state {
     TCP_CONN_CLOSED,
 } connect_state_t;
 
-typedef void (*tcp_handler_t)(tcp_connect_t* conect, connect_state_t state);
+typedef void (*tcp_handler_t)(tcp_connect_t* connect, connect_state_t state);
 
 void tcp_init();
 int tcp_open(uint16_t port, tcp_handler_t handler);
