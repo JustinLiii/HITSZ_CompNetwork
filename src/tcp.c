@@ -1,6 +1,7 @@
 #include <assert.h>
 #include "map.h"
 #include "tcp.h"
+#include "icmp.h"
 #include "ip.h"
 
 static void panic(const char* msg, int line) {
@@ -192,7 +193,7 @@ static uint16_t tcp_write_to_buf(tcp_connect_t* connect, buf_t* buf) {
  * @param flags
  */
 static void tcp_send(buf_t* buf, tcp_connect_t* connect, tcp_flags_t flags) {
-    // printf("<< tcp send >> sz=%zu\n", buf->len);
+    printf("<< tcp send >> sz=%zu\n", buf->len);
     display_flags(flags);
     size_t prev_len = buf->len;
     buf_add_header(buf, sizeof(tcp_hdr_t));
@@ -283,7 +284,7 @@ size_t tcp_connect_write(tcp_connect_t* connect, const uint8_t* data, size_t len
 }
 
 
-static tcp_connect_t* tcp_connect_init(tcp_key_t* key, tcp_handler_t* handler) {
+static tcp_connect_t* tcp_connect_init(tcp_key_t* key, tcp_handler_t handler) {
     tcp_connect_t connect;
     connect.state = TCP_LISTEN;
     connect.local_port = key->dst_port;
@@ -294,6 +295,23 @@ static tcp_connect_t* tcp_connect_init(tcp_key_t* key, tcp_handler_t* handler) {
     return map_get(&connect_table, key);
 }
 
+void close_tcp(tcp_key_t key)
+{
+    tcp_connect_t* connect = map_get(&connect_table, &key);
+    if (connect == NULL) return;
+    release_tcp_connect(connect);
+    map_delete(&connect_table, &key);
+}
+
+void reset_tcp(tcp_connect_t* connect, uint32_t get_seq)
+{
+    printf("!!! reset tcp !!!\n");
+    connect->next_seq = 0;
+    connect->ack = get_seq + 1;
+    buf_init(&txbuf, 0);
+    tcp_send(&txbuf, connect, tcp_flags_ack_rst);
+}
+
 /**
  * @brief 服务器端TCP收包
  *
@@ -301,7 +319,11 @@ static tcp_connect_t* tcp_connect_init(tcp_key_t* key, tcp_handler_t* handler) {
  * @param src_ip
  */
 void tcp_in(buf_t* buf, uint8_t* src_ip) {
-    // printf("<<< tcp_in >>>\n");
+    printf("<<< tcp_in >>>\n");
+    // 备份不存在的ip头
+    ip_hdr_t old_ip_hdr;
+    ip_hdr_t* ip_hdr = (ip_hdr_t*)((void*)buf->data - sizeof(ip_hdr_t));
+    memcpy(&old_ip_hdr, ip_hdr, sizeof(ip_hdr_t));
 
     /*
     1、大小检查，检查buf长度是否小于tcp头部，如果是，则丢弃
@@ -312,12 +334,11 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
     /*
     2、检查checksum字段，如果checksum出错，则丢弃
     */
-    ip_hdr_t* ip_hdr = (ip_hdr_t*)(buf->data - sizeof(ip_hdr_t));
     uint8_t dst_ip[4];
-    memcpy(&dst_ip, ip_hdr->dst_ip, NET_IP_LEN*sizeof(uint8_t)); 
+    memcpy(dst_ip, old_ip_hdr.dst_ip, NET_IP_LEN*sizeof(uint8_t)); 
     uint16_t original_checksum = hdr->chunksum16;
     hdr->chunksum16 = 0;
-    uint16_t calcu_checksum = tcp_checksum(buf, src_ip, &dst_ip);
+    uint16_t calcu_checksum = tcp_checksum(buf, src_ip, dst_ip);
     hdr->chunksum16 = original_checksum;
     if (original_checksum != calcu_checksum) return;
 
@@ -335,7 +356,15 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
     /*
     4、调用map_get函数，根据destination port查找对应的handler函数
     */
-    tcp_handler_t* handler_ptr = map_get(&tcp_table, &src_port);
+    tcp_handler_t* handler_ptr = map_get(&tcp_table, &dst_port);
+    if (handler_ptr == NULL) {
+        // port unreachable
+        buf_add_header(buf, sizeof(ip_hdr_t));
+        // restore header
+        memcpy(buf->data, &old_ip_hdr, sizeof(ip_hdr_t));
+        icmp_unreachable(buf, src_ip, ICMP_CODE_PORT_UNREACH);
+    };
+    tcp_handler_t handler = *handler_ptr;
 
     /*
     5、调用new_tcp_key函数，根据通信五元组中的源IP地址、目标IP地址、目标端口号确定一个tcp链接key
@@ -349,7 +378,7 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
     tcp_connect_t* connect = map_get(&connect_table, &key);
     if (connect == NULL)
     {
-        connect = tcp_connect_init(&key, handler_ptr);
+        connect = tcp_connect_init(&key, handler);
     }
 
     /*
@@ -442,7 +471,8 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
             */
             connect->unack_seq++;
             connect->state = TCP_ESTABLISHED;
-            (*(tcp_handler_t*)(connect->handler))(connect, TCP_CONN_CONNECTED);
+            ((tcp_handler_t)(connect->handler))(connect, TCP_CONN_CONNECTED);
+            break;
 
         case TCP_ESTABLISHED:
 
@@ -461,7 +491,7 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
             */
             if (flags.ack && connect->unack_seq < ack_number && connect->next_seq > ack_number)
             {
-                buf_remove_header(&(connect->tx_buf), ack_number - connect->unack_seq);
+                buf_remove_header(connect->tx_buf, ack_number - connect->unack_seq);
                 connect->unack_seq = ack_number;
             }
 
@@ -490,17 +520,16 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
                 return;
             }
 
-            // 我不发数据，对面也没有数据，不做操作
-            if (buf->len == 0 && !tcp_read_from_buf(connect, buf)) return;
-            
-            // 无论我有没有数据，前文已经调用了tcp_read_from_buf，下文操作一致
+            // 收数据
             if (buf->len > 0) {
-                // 对面有数据，发ACK
+                ((tcp_handler_t)(connect->handler))(connect, TCP_CONN_DATA_RECV);
+                tcp_write_to_buf(connect, &txbuf);
                 tcp_send(&txbuf, connect, tcp_flags_ack);
-                (*(tcp_handler_t*)(connect->handler))(connect, TCP_CONN_DATA_RECV);
             } else {
                 // 无数据，发null
-                tcp_send(&txbuf, connect, tcp_flags_null);
+                if (tcp_write_to_buf(connect, &txbuf)) {
+                    tcp_send(&txbuf, connect, tcp_flags_null);
+                }
             }
             break;
 
@@ -522,7 +551,6 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
             {
                 connect->state = TCP_FIN_WAIT_2;
             }
-
             break;
 
         case TCP_FIN_WAIT_2:
@@ -543,29 +571,14 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
                 如果是，则调用handler函数，进入TCP_CONN_CLOSED状态，，再close_tcp关闭TCP
             */
             if (!flags.ack) return;
-            (*(tcp_handler_t*)(connect->handler))(connect, TCP_CONN_CLOSED);
+            ((tcp_handler_t)(connect->handler))(connect, TCP_CONN_CLOSED);
             close_tcp(key);
+            printf("<<< connection closed >>> \n");
+            break;
 
         default:
             panic("connect->state", __LINE__);
             break;
     }
     return;
-}
-
-void close_tcp(tcp_key_t key)
-{
-    tcp_connect_t* connect = map_get(&connect_table, &key);
-    if (connect == NULL) return;
-    release_tcp_connect(connect);
-    map_delete(&connect_table, &key);
-}
-
-void reset_tcp(tcp_connect_t* connect, uint32_t get_seq)
-{
-    printf("!!! reset tcp !!!\n");
-    connect->next_seq = 0;
-    connect->ack = get_seq + 1;
-    buf_init(&txbuf, 0);
-    tcp_send(&txbuf, connect, tcp_flags_ack_rst);
 }

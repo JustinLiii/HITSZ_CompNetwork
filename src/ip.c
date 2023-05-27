@@ -48,7 +48,7 @@ void ip_in(buf_t *buf, uint8_t *src_mac)
     {
         case(NET_PROTOCOL_UDP):
         case(NET_PROTOCOL_ICMP):
-        // case(NET_PROTOCOL_TCP):
+        case(NET_PROTOCOL_TCP):
             buf_remove_header(buf, hdr->hdr_len * IP_HDR_LEN_PER_BYTE);
             net_in(buf, protocol, src_ip);
             break;
