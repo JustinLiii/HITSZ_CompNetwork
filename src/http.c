@@ -1,3 +1,4 @@
+#include <string.h>
 #include "http.h"
 #include "tcp.h"
 #include "net.h"
@@ -77,13 +78,52 @@ static void close_http(tcp_connect_t* tcp) {
     printf("http closed.\n");
 }
 
+static size_t http_response_send(tcp_connect_t* tcp, http_resp_hdr_t* response, const char* buf, FILE* body_f) {
+    int write_idx = 0;
+    // build header
+    switch (response->version) {
+        case HTTP_VERSION_1_0:
+            write_idx += sprintf(buf + write_idx, "HTTP/1.0 ");
+            break;
+        default:
+            assert(0);
+    }
+    switch (response->status_code) {
+        case HTTP_404_NOT_FOUND:
+            write_idx += sprintf(buf + write_idx, "404 ");
+            break;
+        case HTTP_200_OK:
+            write_idx += sprintf(buf + write_idx, "200 ");
+            break;
+        default:
+            assert(0);
+    }
+    write_idx += sprintf(buf + write_idx, "%s\r\n",response->status_msg);
 
+    // build header lines
+    header_line_t* line = response->headers;
+    while (line->key != NULL)
+    {
+        write_idx += sprintf(buf + write_idx, "%s: %s\r\n", line->key, line->value);
+    }
+    // end
+    write_idx += sprintf(buf + write_idx, "\r\n");
+    // body
+    if (body_f != NULL)  {
+        while(!feof(body_f)) {
+            write_idx += fread(buf + write_idx, 1, 1, body_f);
+        }
+    }
+
+    // send
+    http_send(tcp, buf, write_idx);
+}
 
 static void send_file(tcp_connect_t* tcp, const char* url) {
     FILE* file;
     uint32_t size;
     // const char* content_type = "text/html";
-    char file_path[255];
+    char file_path[255] = XHTTP_DOC_DIR;
     char tx_buffer[1024];
 
     /*
@@ -93,9 +133,33 @@ static void send_file(tcp_connect_t* tcp, const char* url) {
 
     注意，本实验的WEB服务器网页存放在XHTTP_DOC_DIR目录中
     */
-
-   // TODO
-
+    int slash_num = 0;
+    while (slash_num < 3) {
+        if (*url == '/') {
+            slash_num++;
+        }
+        url++;
+    }
+    strcat(file_path, url);
+    if((file = fopen(file_path, "rb")) == NULL) {
+        // build 404 resp
+        http_resp_hdr_t resp;
+        char msg[] = "NOT FOUND";
+        resp.version = HTTP_VERSION_1_0;
+        resp.status_code = HTTP_404_NOT_FOUND;
+        resp.status_msg = &msg;
+        // TODO 要写什么header？
+        http_response_send(tcp, &resp, tx_buffer, NULL);
+    } else {
+        // build 200 resp
+        http_resp_hdr_t resp;
+        char msg[] = "OK";
+        resp.version = HTTP_VERSION_1_0;
+        resp.status_code = HTTP_200_OK;
+        resp.status_msg = &msg;
+        // TODO 要写什么header？
+        http_response_send(tcp, &resp, tx_buffer, file);
+    }
 }
 
 static void http_handler(tcp_connect_t* tcp, connect_state_t state) {
@@ -132,34 +196,39 @@ void http_server_run(void) {
         int i;
         char* c = rx_buffer;
 
-
         /*
         1、调用get_line从rx_buffer中获取一行数据，如果没有数据，则调用close_http关闭tcp，并继续循环
         */
-
-       // TODO
+        if (!get_line(tcp, rx_buffer, 1024)) {
+            close_http(tcp);
+            continue;
+        };
 
 
         /*
         2、检查是否有GET请求，如果没有，则调用close_http关闭tcp，并继续循环
         */
-
-       // TODO
+        if (!strncmp(c, "GET", 3)) {
+            close_http(tcp);
+            continue;
+        }
 
 
         /*
         3、解析GET请求的路径，注意跳过空格，找到GET请求的文件，调用send_file发送文件
         */
-
-       // TODO
+        c += 4;
+        size_t i = 0;
+        while(c[i++] != ' ');
+        i--;
+        c[i] = '\0';
+        send_file(tcp, c);
 
 
         /*
         4、调用close_http关掉连接
         */
-
-       // TODO
-
+        close_http(tcp);
 
         printf("!! final close\n");
     }
