@@ -297,6 +297,8 @@ static tcp_connect_t* tcp_connect_init(tcp_key_t* key, tcp_handler_t handler) {
 
 void close_tcp(tcp_key_t key)
 {
+    
+    printf("!!! connection closed !!!\n");
     tcp_connect_t* connect = map_get(&connect_table, &key);
     if (connect == NULL) return;
     release_tcp_connect(connect);
@@ -573,7 +575,6 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
             if (!flags.ack) return;
             ((tcp_handler_t)(connect->handler))(connect, TCP_CONN_CLOSED);
             close_tcp(key);
-            printf("<<< connection closed >>> \n");
             break;
 
         default:
