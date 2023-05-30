@@ -3,13 +3,16 @@
 
 #include <stdint.h>
 
-#define XHTTP_DOC_DIR               "../htdocs"
+#define XHTTP_DOC_DIR               "../htmldocs"
+#define BUFFER_SIZE                 1024
 
-// the end of a header line array is marked by an null key
+// the end of a header line array is marked by end line defined below
 typedef struct header_line {
-    char* key;
-    char* value;
+    char key[1024];
+    char value[1024];
 } header_line_t;
+
+static const header_line_t header_line_end = { .key = " ", .value = " " };
 
 typedef enum http_method {
     HTTP_METHOD_GET,

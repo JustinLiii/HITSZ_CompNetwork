@@ -78,8 +78,9 @@ static void close_http(tcp_connect_t* tcp) {
     printf("http closed.\n");
 }
 
-static size_t http_response_send(tcp_connect_t* tcp, http_resp_hdr_t* response, const char* buf, FILE* body_f) {
+static size_t phrase_http_resp(http_resp_hdr_t* response, char* buf) {
     int write_idx = 0;
+    memset(buf, 0, BUFFER_SIZE);
     // build header
     switch (response->version) {
         case HTTP_VERSION_1_0:
@@ -99,32 +100,24 @@ static size_t http_response_send(tcp_connect_t* tcp, http_resp_hdr_t* response, 
             assert(0);
     }
     write_idx += sprintf(buf + write_idx, "%s\r\n",response->status_msg);
-
     // build header lines
     header_line_t* line = response->headers;
-    while (line->key != NULL)
+    while (strcmp(line->key," "))
     {
         write_idx += sprintf(buf + write_idx, "%s: %s\r\n", line->key, line->value);
+        line++;
     }
     // end
     write_idx += sprintf(buf + write_idx, "\r\n");
-    // body
-    if (body_f != NULL)  {
-        while(!feof(body_f)) {
-            write_idx += fread(buf + write_idx, 1, 1, body_f);
-        }
-    }
-
-    // send
-    http_send(tcp, buf, write_idx);
+    printf("--- --- header ---\n%s\n--- --- size: %d bytes ---\n", buf, write_idx);
+    return write_idx;
 }
 
 static void send_file(tcp_connect_t* tcp, const char* url) {
     FILE* file;
-    uint32_t size;
-    // const char* content_type = "text/html";
+    // uint32_t size = 0;
     char file_path[255] = XHTTP_DOC_DIR;
-    char tx_buffer[1024];
+    char tx_buffer[BUFFER_SIZE];
 
     /*
     解析url路径，查看是否是查看XHTTP_DOC_DIR目录下的文件
@@ -133,32 +126,53 @@ static void send_file(tcp_connect_t* tcp, const char* url) {
 
     注意，本实验的WEB服务器网页存放在XHTTP_DOC_DIR目录中
     */
-    int slash_num = 0;
-    while (slash_num < 3) {
-        if (*url == '/') {
-            slash_num++;
-        }
-        url++;
+    // index.html 自动转换
+    if (!strcmp(url, "/")) {
+        url = "/index.html";
     }
     strcat(file_path, url);
+
+    printf("--- - getting file %s\n", file_path);
+
     if((file = fopen(file_path, "rb")) == NULL) {
+        printf("--- -- %s not found\n", file_path);
         // build 404 resp
         http_resp_hdr_t resp;
+        header_line_t lines[1];
+        lines[0] = header_line_end;
         char msg[] = "NOT FOUND";
         resp.version = HTTP_VERSION_1_0;
         resp.status_code = HTTP_404_NOT_FOUND;
-        resp.status_msg = &msg;
-        // TODO 要写什么header？
-        http_response_send(tcp, &resp, tx_buffer, NULL);
+        resp.status_msg = msg;
+        resp.headers = lines;
+        printf("--- -- sending 404\n");
+
+        phrase_http_resp(&resp, tx_buffer);
+        http_send(tcp, tx_buffer, strlen(tx_buffer));
     } else {
         // build 200 resp
+        printf("--- -- found %s, sending\n", file_path);
         http_resp_hdr_t resp;
+
+        header_line_t lines[1];
+        lines[0] = header_line_end;
+
         char msg[] = "OK";
         resp.version = HTTP_VERSION_1_0;
         resp.status_code = HTTP_200_OK;
-        resp.status_msg = &msg;
-        // TODO 要写什么header？
-        http_response_send(tcp, &resp, tx_buffer, file);
+        resp.status_msg = msg;
+        resp.headers = lines;
+
+        phrase_http_resp(&resp, tx_buffer);
+        http_send(tcp, tx_buffer, strlen(tx_buffer));
+
+        memset(tx_buffer, 0, BUFFER_SIZE);
+        int read_size = 0;
+        while ((read_size = fread(tx_buffer, 1, BUFFER_SIZE, file)) > 0) {
+            http_send(tcp, tx_buffer, read_size);
+            memset(tx_buffer, 0, BUFFER_SIZE);
+        }
+        fclose(file);
     }
 }
 
@@ -189,8 +203,8 @@ int http_server_open(uint16_t port) {
 
 void http_server_run(void) {
     tcp_connect_t* tcp;
-    char url_path[255];
-    char rx_buffer[1024];
+    // char url_path[255];
+    char rx_buffer[1024] = {0};
 
     while ((tcp = http_fifo_out(&http_fifo_v)) != NULL) {
         int i;
@@ -199,7 +213,8 @@ void http_server_run(void) {
         /*
         1、调用get_line从rx_buffer中获取一行数据，如果没有数据，则调用close_http关闭tcp，并继续循环
         */
-        if (!get_line(tcp, rx_buffer, 1024)) {
+        if (!get_line(tcp, c, 1024)) {
+            printf("no data");
             close_http(tcp);
             continue;
         };
@@ -208,7 +223,8 @@ void http_server_run(void) {
         /*
         2、检查是否有GET请求，如果没有，则调用close_http关闭tcp，并继续循环
         */
-        if (!strncmp(c, "GET", 3)) {
+        if (strncmp(c, "GET", 3)) {
+            printf("--- bad request %s\n", c);
             close_http(tcp);
             continue;
         }
@@ -218,7 +234,7 @@ void http_server_run(void) {
         3、解析GET请求的路径，注意跳过空格，找到GET请求的文件，调用send_file发送文件
         */
         c += 4;
-        size_t i = 0;
+        i = 0;
         while(c[i++] != ' ');
         i--;
         c[i] = '\0';
@@ -230,6 +246,6 @@ void http_server_run(void) {
         */
         close_http(tcp);
 
-        printf("!! final close\n");
+        printf("--- - !! final close\n");
     }
 }
