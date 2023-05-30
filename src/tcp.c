@@ -329,6 +329,11 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
     */
     if (buf->len < sizeof(tcp_hdr_t)) return;
 
+    // 备份不存在的ip头
+    ip_hdr_t old_ip_hdr;
+    ip_hdr_t* ip_hdr = (ip_hdr_t*)((void*)buf->data - sizeof(ip_hdr_t));
+    memcpy(&old_ip_hdr, ip_hdr, sizeof(ip_hdr_t));
+
     tcp_hdr_t* hdr = (tcp_hdr_t*)(buf->data);
     /*
     2、检查checksum字段，如果checksum出错，则丢弃
@@ -354,6 +359,13 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
     4、调用map_get函数，根据destination port查找对应的handler函数
     */
     tcp_handler_t* handler_ptr = map_get(&tcp_table, &dst_port);
+    if (handler_ptr == NULL) {
+        // port unreachable
+        buf_add_header(buf, sizeof(ip_hdr_t));
+        // restore header
+        memcpy(buf->data, &old_ip_hdr, sizeof(ip_hdr_t));
+        icmp_unreachable(buf, src_ip, ICMP_CODE_PORT_UNREACH);
+    };
     tcp_handler_t handler = *handler_ptr;
 
     /*
