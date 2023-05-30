@@ -71,7 +71,6 @@ void ip_in(buf_t *buf, uint8_t *src_mac)
 void ip_fragment_out(buf_t *buf, uint8_t *ip, net_protocol_t protocol, int id, uint16_t offset, int mf)
 {
     buf_add_header(buf, sizeof(ip_hdr_t));
-
     // 填写报头
     ip_hdr_t* hdr = (ip_hdr_t*)buf->data;
     hdr->hdr_len = sizeof(ip_hdr_t) / IP_HDR_LEN_PER_BYTE;
@@ -85,11 +84,12 @@ void ip_fragment_out(buf_t *buf, uint8_t *ip, net_protocol_t protocol, int id, u
     hdr->flags_fragment16 = swap16(flags_fragment);
     hdr->ttl = 64;
     hdr->protocol = protocol;
-    hdr->hdr_checksum16 = 0;
     memcpy(hdr->src_ip, net_if_ip, NET_IP_LEN);
     memcpy(hdr->dst_ip, ip, NET_IP_LEN);
+    hdr->hdr_checksum16 = 0;
     hdr->hdr_checksum16 = checksum16((uint16_t*)hdr, sizeof(ip_hdr_t));
 
+    printf("fragment %lu bytes sent\n", buf->len);
     arp_out(buf, ip);
 }
 
@@ -102,47 +102,27 @@ void ip_fragment_out(buf_t *buf, uint8_t *ip, net_protocol_t protocol, int id, u
  */
 void ip_out(buf_t *buf, uint8_t *ip, net_protocol_t protocol)
 {
+    static int ip_id = 0;
+    printf("sending buf %lu bytes\n", buf->len);
     // 只考虑20字节的ip头时，最大数据长度是8的整数倍
     size_t max_data_len = IP_MTU - sizeof(ip_hdr_t);
-    if (buf->len < max_data_len)
+
+    // 分片
+    buf_t new_buf;
+    uint32_t offset = 0;
+
+    while (buf->len > max_data_len)
     {
-        ip_fragment_out(buf, ip, protocol, ip_id++, 0, 0);
+        buf_init(&new_buf, max_data_len);
+        memcpy(new_buf.data, buf->data, max_data_len);
+        ip_fragment_out(&new_buf, ip, protocol, ip_id, offset, 1);
+        buf_remove_header(buf, max_data_len);
+        offset += max_data_len / IP_HDR_OFFSET_PER_BYTE;
     }
-    else
-    {
-        // 分片
-        buf_t original_buf;
-        memcpy(&original_buf, buf, sizeof(buf_t));
-        uint8_t *data = original_buf.data;
-        int len = original_buf.len;
-        uint16_t offset = 0;
-
-        int mf = 1;
-        while (mf)
-        {
-            size_t data_len;
-            if (len > max_data_len) data_len = max_data_len;
-            else 
-            {
-                mf = 0;
-                if (len & 0x7)
-                {
-                    buf_add_padding(&original_buf, (len & ~0x7) + IP_HDR_OFFSET_PER_BYTE - len);
-                    data_len = (len & ~0x7) + IP_HDR_OFFSET_PER_BYTE;
-                }
-                else data_len = len;
-            }
-
-            buf_init(buf, data_len);
-            memcpy(buf->data, data, data_len);
-            ip_fragment_out(buf, ip, protocol, ip_id, offset, mf);
-
-            offset += data_len / IP_HDR_OFFSET_PER_BYTE;
-            data += data_len;
-            len -= data_len;
-        }
-        ip_id++;
-    }
+    buf_init(&new_buf, buf->len);
+    memcpy(new_buf.data, buf->data, buf->len); // 最后一个分片，大小就等于该分片大小
+    ip_fragment_out(&new_buf, ip, protocol, ip_id, offset, 0);
+    ip_id++;
 }
 
 /**
