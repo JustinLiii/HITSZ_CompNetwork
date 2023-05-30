@@ -112,17 +112,28 @@ static void release_tcp_connect(tcp_connect_t* connect) {
  * @return uint16_t 
  */
 static uint16_t tcp_checksum(buf_t* buf, uint8_t* src_ip, uint8_t* dst_ip) {
-    uint16_t len = (uint16_t)buf->len;
-    tcp_peso_hdr_t* peso_hdr = (tcp_peso_hdr_t*)(buf->data - sizeof(tcp_peso_hdr_t));
-    tcp_peso_hdr_t pre; //暂存被覆盖的IP头
-    memcpy(&pre, peso_hdr, sizeof(tcp_peso_hdr_t));
+    // uint16_t len = (uint16_t)buf->len;
+    // tcp_peso_hdr_t* peso_hdr = (tcp_peso_hdr_t*)(buf->data - sizeof(tcp_peso_hdr_t));
+    // tcp_peso_hdr_t pre; //暂存被覆盖的IP头
+    // memcpy(&pre, peso_hdr, sizeof(tcp_peso_hdr_t));
+    // memcpy(peso_hdr->src_ip, src_ip, NET_IP_LEN);
+    // memcpy(peso_hdr->dst_ip, dst_ip, NET_IP_LEN);
+    // peso_hdr->placeholder = 0;
+    // peso_hdr->protocol = NET_PROTOCOL_TCP;
+    // peso_hdr->total_len16 = swap16(len);
+    // uint16_t checksum = checksum16((uint16_t*)peso_hdr, len + sizeof(tcp_peso_hdr_t));
+    // memcpy(peso_hdr, &pre, sizeof(tcp_peso_hdr_t));
+    // return checksum;
+    buf_t tmp_buf;
+    buf_copy(&tmp_buf, buf, sizeof(buf));
+    buf_add_header(&tmp_buf, sizeof(tcp_peso_hdr_t));
+    tcp_peso_hdr_t *peso_hdr = (tcp_peso_hdr_t *)tmp_buf.data;
     memcpy(peso_hdr->src_ip, src_ip, NET_IP_LEN);
     memcpy(peso_hdr->dst_ip, dst_ip, NET_IP_LEN);
     peso_hdr->placeholder = 0;
     peso_hdr->protocol = NET_PROTOCOL_TCP;
-    peso_hdr->total_len16 = swap16(len);
-    uint16_t checksum = checksum16((uint16_t*)peso_hdr, len + sizeof(tcp_peso_hdr_t));
-    memcpy(peso_hdr, &pre, sizeof(tcp_peso_hdr_t));
+    peso_hdr->total_len16 = swap16(buf->len);
+    uint16_t checksum = checksum16((uint16_t*)peso_hdr, tmp_buf.len);
     return checksum;
 }
 
@@ -206,9 +217,9 @@ static void tcp_send(buf_t* buf, tcp_connect_t* connect, tcp_flags_t flags) {
     hdr->reserved = 0;
     hdr->flags = flags;
     hdr->window_size16 = swap16(connect->remote_win);
-    hdr->chunksum16 = 0;
+    hdr->checksum16 = 0;
     hdr->urgent_pointer16 = 0;
-    hdr->chunksum16 = tcp_checksum(buf, connect->ip, net_if_ip);
+    hdr->checksum16 = tcp_checksum(buf, connect->ip, net_if_ip);
     ip_out(buf, connect->ip, NET_PROTOCOL_TCP);
     if (flags.syn || flags.fin) {
         connect->next_seq += 1;
@@ -289,7 +300,7 @@ static tcp_connect_t* tcp_connect_init(tcp_key_t* key, tcp_handler_t handler) {
     connect.state = TCP_LISTEN;
     connect.local_port = key->dst_port;
     connect.remote_port = key->src_port;
-    memcpy(&(connect.ip), &(key->ip), NET_IP_LEN*sizeof(uint8_t));
+    memcpy(connect.ip, key->ip, NET_IP_LEN);
     connect.handler = handler;
     map_set(&connect_table, key, &connect);
     return map_get(&connect_table, key);
@@ -305,13 +316,15 @@ void close_tcp(tcp_key_t key)
     map_delete(&connect_table, &key);
 }
 
-void reset_tcp(tcp_connect_t* connect, uint32_t get_seq)
+void reset_tcp(tcp_key_t key, uint32_t get_seq)
 {
-    printf("!!! reset tcp !!!\n");
+    printf("!!! reset tcp when recv seq %d !!!\n", get_seq);
+    tcp_connect_t* connect = map_get(&connect_table, &key);
     connect->next_seq = 0;
     connect->ack = get_seq + 1;
     buf_init(&txbuf, 0);
     tcp_send(&txbuf, connect, tcp_flags_ack_rst);
+    close_tcp(key);
 }
 
 /**
@@ -322,26 +335,25 @@ void reset_tcp(tcp_connect_t* connect, uint32_t get_seq)
  */
 void tcp_in(buf_t* buf, uint8_t* src_ip) {
     printf("<<< tcp_in >>>\n");
-    // 备份不存在的ip头
-    ip_hdr_t old_ip_hdr;
-    ip_hdr_t* ip_hdr = (ip_hdr_t*)((void*)buf->data - sizeof(ip_hdr_t));
-    memcpy(&old_ip_hdr, ip_hdr, sizeof(ip_hdr_t));
 
     /*
     1、大小检查，检查buf长度是否小于tcp头部，如果是，则丢弃
     */
     if (buf->len < sizeof(tcp_hdr_t)) return;
 
+    // 备份不存在的ip头
+    // ip_hdr_t old_ip_hdr;
+    // ip_hdr_t* ip_hdr = (ip_hdr_t*)((void*)buf->data - sizeof(ip_hdr_t));
+    // memcpy(&old_ip_hdr, ip_hdr, sizeof(ip_hdr_t));
+
     tcp_hdr_t* hdr = (tcp_hdr_t*)(buf->data);
     /*
     2、检查checksum字段，如果checksum出错，则丢弃
-    */
-    uint8_t dst_ip[4];
-    memcpy(dst_ip, old_ip_hdr.dst_ip, NET_IP_LEN*sizeof(uint8_t)); 
-    uint16_t original_checksum = hdr->chunksum16;
-    hdr->chunksum16 = 0;
-    uint16_t calcu_checksum = tcp_checksum(buf, src_ip, dst_ip);
-    hdr->chunksum16 = original_checksum;
+    */ 
+    uint16_t original_checksum = hdr->checksum16;
+    hdr->checksum16 = 0;
+    uint16_t calcu_checksum = tcp_checksum(buf, src_ip, net_if_ip);
+    hdr->checksum16 = original_checksum;
     if (original_checksum != calcu_checksum) return;
 
     /*
@@ -359,13 +371,13 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
     4、调用map_get函数，根据destination port查找对应的handler函数
     */
     tcp_handler_t* handler_ptr = map_get(&tcp_table, &dst_port);
-    if (handler_ptr == NULL) {
-        // port unreachable
-        buf_add_header(buf, sizeof(ip_hdr_t));
-        // restore header
-        memcpy(buf->data, &old_ip_hdr, sizeof(ip_hdr_t));
-        icmp_unreachable(buf, src_ip, ICMP_CODE_PORT_UNREACH);
-    };
+    // if (handler_ptr == NULL) {
+    //     // port unreachable
+    //     buf_add_header(buf, sizeof(ip_hdr_t));
+    //     // restore header
+    //     memcpy(buf->data, &old_ip_hdr, sizeof(ip_hdr_t));
+    //     icmp_unreachable(buf, src_ip, ICMP_CODE_PORT_UNREACH);
+    // };
     tcp_handler_t handler = *handler_ptr;
 
     /*
@@ -410,15 +422,14 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
         }
         else if (!flags.syn)
         {
-            reset_tcp(connect, seq_number);
+            reset_tcp(key, seq_number);
         }
         else
         {
             init_tcp_connect_rcvd(connect);
-            connect->state = TCP_SYN_RCVD;
             connect->local_port = dst_port;
             connect->remote_port = src_port;
-            memcpy(&(connect->ip), src_ip, NET_IP_LEN*sizeof(uint8_t));
+            memcpy(connect->ip, src_ip, NET_IP_LEN);
             connect->unack_seq = rand();
             connect->next_seq = connect->unack_seq;
             connect->ack = seq_number + 1;
@@ -435,7 +446,8 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
     */
     if (seq_number != connect->ack)
     {
-        reset_tcp(connect, seq_number);
+        reset_tcp(key, seq_number);
+        return;
     }
 
     /* 
@@ -444,6 +456,7 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
     if (flags.rst)
     {
         close_tcp(key);
+        return;
     }
 
     /*
@@ -533,6 +546,16 @@ void tcp_in(buf_t* buf, uint8_t* src_ip) {
                     tcp_send(&txbuf, connect, tcp_flags_null);
                 }
             }
+            // if (buf->len > 0)
+            // {
+            //     (*handler)(connect, TCP_CONN_DATA_RECV);
+            //     tcp_send(&txbuf, connect, tcp_flags_ack);
+            // }
+            // // 16.4 调用 tcp_write_to_buf 函数，看看是否有数据需要发送，如果有，同时发数据和 ACK
+            // if (tcp_write_to_buf(connect, &txbuf) > 0)
+            // {
+            //     tcp_send(&txbuf, connect, tcp_flags_ack);
+            // }
             break;
 
         case TCP_CLOSE_WAIT:
