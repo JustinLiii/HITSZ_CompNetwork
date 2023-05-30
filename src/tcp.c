@@ -112,18 +112,6 @@ static void release_tcp_connect(tcp_connect_t* connect) {
  * @return uint16_t 
  */
 static uint16_t tcp_checksum(buf_t* buf, uint8_t* src_ip, uint8_t* dst_ip) {
-    // uint16_t len = (uint16_t)buf->len;
-    // tcp_peso_hdr_t* peso_hdr = (tcp_peso_hdr_t*)(buf->data - sizeof(tcp_peso_hdr_t));
-    // tcp_peso_hdr_t pre; //暂存被覆盖的IP头
-    // memcpy(&pre, peso_hdr, sizeof(tcp_peso_hdr_t));
-    // memcpy(peso_hdr->src_ip, src_ip, NET_IP_LEN);
-    // memcpy(peso_hdr->dst_ip, dst_ip, NET_IP_LEN);
-    // peso_hdr->placeholder = 0;
-    // peso_hdr->protocol = NET_PROTOCOL_TCP;
-    // peso_hdr->total_len16 = swap16(len);
-    // uint16_t checksum = checksum16((uint16_t*)peso_hdr, len + sizeof(tcp_peso_hdr_t));
-    // memcpy(peso_hdr, &pre, sizeof(tcp_peso_hdr_t));
-    // return checksum;
     buf_t tmp_buf;
     buf_copy(&tmp_buf, buf, sizeof(buf));
     buf_add_header(&tmp_buf, sizeof(tcp_peso_hdr_t));
